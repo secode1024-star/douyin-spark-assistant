@@ -1,0 +1,18 @@
+{
+  "conversation_list": ".conversationConversationListwrapper",
+  "conversation_name": ".conversationConversationItemtitle",
+  "conversation_row": ".conversationConversationItemwrapper",
+  "conversation_panel": ".componentsRightPanelwrapper",
+  "conversation_header": ".RightPanelHeadertitle",
+  "editor": ".messageEditorinputArea[contenteditable=\"true\"]",
+  "editor_placeholder": ".ace-line > span[data-enter=\"true\"][data-leaf=\"true\"][data-string=\"true\"]",
+  "message_text": ".messageMessageListlist .TextMessageTextpureText",
+  "message_container": ".messageMessageBoxmessageBox",
+  "outgoing_message": ".messageMessageBoxisFromMe",
+  "message_text_in_container": ".TextMessageTextpureText",
+  "message_id_attribute": "",
+  "message_failed": "",
+  "message_pending": "",
+  "send_method": "enter",
+  "send_button": ""
+}

@@ -1,0 +1,143 @@
+name: Build desktop installers
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            platform: windows
+            arch: x64
+          - runner: macos-15
+            platform: macos
+            arch: arm64
+          - runner: macos-15-intel
+            platform: macos
+            arch: x64
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONUTF8: "1"
+      PYTHONUNBUFFERED: "1"
+      SPARK_BROWSER_INTEGRATION: "1"
+      SPARK_SMOKE_TEST: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          architecture: ${{ matrix.arch }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-build.txt
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          python -m venv .venv
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            PYTHON=".venv/Scripts/python.exe"
+          else
+            PYTHON=".venv/bin/python"
+          fi
+          "$PYTHON" -m pip install -r requirements-build.txt
+
+      - name: Run offline tests
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            PYTHON=".venv/Scripts/python.exe"
+          else
+            PYTHON=".venv/bin/python"
+          fi
+          export PLAYWRIGHT_BROWSERS_PATH="$PWD/.local/browsers"
+          "$PYTHON" -m playwright install chromium
+          "$PYTHON" -m unittest discover -s tests -v
+
+      - name: Install NSIS
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install nsis --yes --no-progress
+
+      - name: Verify installer directory validation
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $compiler = Get-Command makensis.exe -ErrorAction SilentlyContinue
+          if ($compiler) {
+            $nsisPath = $compiler.Source
+          } else {
+            $nsisPath = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
+          }
+          if (-not (Test-Path -LiteralPath $nsisPath -PathType Leaf)) {
+            throw 'NSIS compiler was not found after installation.'
+          }
+          ./scripts/test-installer-directory.ps1 -NsisPath $nsisPath
+          ./scripts/test-installer-safety.ps1 -NsisPath $nsisPath
+          ./scripts/test-installer-autostart.ps1 -NsisPath $nsisPath
+
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/build-windows.ps1 -SkipInstall
+
+      - name: Build macOS disk image
+        if: runner.os == 'macOS'
+        shell: bash
+        run: bash scripts/build-macos.sh --skip-install
+
+      - name: Verify frozen application and bundled browser offline
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            .venv/Scripts/python.exe scripts/smoke_release.py
+          else
+            .venv/bin/python scripts/smoke_release.py --app-dir dist/SparkAssistant.app
+          fi
+
+      - name: Create and verify source-only release
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            PYTHON=".venv/Scripts/python.exe"
+            APP="dist/SparkAssistant"
+            INSTALLER=(release/*-windows-x64.exe)
+          else
+            PYTHON=".venv/bin/python"
+            APP="dist/SparkAssistant.app"
+            INSTALLER=(release/*-macos-*.dmg)
+          fi
+          "$PYTHON" scripts/make_source_archive.py
+          "$PYTHON" scripts/verify_release.py --app-dir "$APP" --installer "${INSTALLER[0]}"
+
+      # Upload only distributable installers, allowlisted source and checksums.
+      # Profiles and logs stay local.
+      # This workflow does not publish a GitHub Release or upload the source workspace.
+      - name: Upload installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: SparkAssistant-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            release/*.exe
+            release/*.dmg
+            release/*-source.zip
+            release/*.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
